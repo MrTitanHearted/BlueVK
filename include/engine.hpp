@@ -27,7 +27,7 @@ namespace bluevk {
     struct BlueVKEngineParams {
         VkExtent2D windowSize = {1700, 1000};
         std::string windowTitle = "BlueVK Engine";
-        bool isResizable = false;
+        bool isResizable = true;
     };
 
     class BlueVKEngine {
@@ -61,6 +61,9 @@ namespace bluevk {
         VkExtent2D _windowSize;
         std::string _windowTitle;
         bool _isResizable;
+        bool _freezRendering{false};
+        bool _resizeRequested{false};
+        float _renderScale{1.0f};
         sf::RenderWindow _window;
         VkInstance _instance;
         VkDebugUtilsMessengerEXT _debugMessenger;
@@ -110,7 +113,12 @@ namespace bluevk {
         void draw_imgui(VkCommandBuffer cmd, VkImageView view);
 
         void create_swapchain(VkExtent2D size);
+        void create_draw_images();
+
+        void resize_swapchain();
+
         void destroy_swapchain();
+        void destroy_draw_images();
 
         FrameData &get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
 

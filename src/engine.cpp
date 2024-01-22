@@ -3,6 +3,8 @@
 
 #include <engine.hpp>
 
+#include <thread>
+
 #include <imgui.h>
 #include <imgui-SFML.h>
 #include <imgui_impl_vulkan.h>
@@ -53,14 +55,29 @@ namespace bluevk {
                             default:
                         }
                         break;
+                    case sf::Event::LostFocus:
+                        _freezRendering = true;
+                        break;
+                    case sf::Event::GainedFocus:
+                        _freezRendering = false;
+                        break;
                     default:
                 }
             }
-            if (render) {
+            if (_freezRendering) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            } else if (render) {
+                if (_resizeRequested) {
+                    resize_swapchain();
+                }
+
                 ImGui_ImplVulkan_NewFrame();
                 ImGui::NewFrame();
 
                 if (ImGui::Begin("Background")) {
+                    ImGui::SliderFloat("Render Scale", &_renderScale, 0.3f, 1.f);
+
                     ComputeEffect &selected = _computeEffects[_currentComputeEffect];
 
                     ImGui::Text("Selected effect: %s", selected.name);
@@ -163,6 +180,7 @@ namespace bluevk {
             vmaDestroyAllocator(_vmaAllocator);
             vkDestroySurfaceKHR(_instance, _surface, nullptr);
             vkDestroyDevice(_device, nullptr);
+            destroy_draw_images();
             destroy_swapchain();
             vkb::destroy_debug_utils_messenger(_instance, _debugMessenger);
             vkDestroyInstance(_instance, nullptr);
@@ -170,29 +188,7 @@ namespace bluevk {
     }
     void BlueVKEngine::init_swapchain() {
         create_swapchain(_windowSize);
-        _drawImage.format = VK_FORMAT_R16G16B16A16_SFLOAT;
-        _drawImage.extent = _windowSize;
-        VmaAllocationCreateInfo allocCreateInfo{
-            .usage = VMA_MEMORY_USAGE_GPU_ONLY,
-            .requiredFlags = VkMemoryPropertyFlags{VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT},
-        };
-        _drawImage.image = ImageBuilder{}
-                               .set_extent(_windowSize)
-                               .set_format(_drawImage.format)
-                               .set_usage(VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                                          VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                                          VK_IMAGE_USAGE_STORAGE_BIT |
-                                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
-                               .vmaBuild(_vmaAllocator, &allocCreateInfo, &_drawImage.allocation, nullptr);
-        _drawImage.view = ImageViewBuilder{}
-                              .set_format(_drawImage.format)
-                              .set_image(_drawImage.image)
-                              .build(_device);
-
-        _mainDeletionQueue.push_back([&]() {
-            vkDestroyImageView(_device, _drawImage.view, nullptr);
-            vmaDestroyImage(_vmaAllocator, _drawImage.image, _drawImage.allocation);
-        });
+        create_draw_images();
     }
     void BlueVKEngine::init_commands() {
         CommandPoolBuilder poolBuilder = CommandPoolBuilder{}
@@ -277,7 +273,7 @@ namespace bluevk {
         ImGui_ImplVulkan_CreateFontsTexture();
         _mainDeletionQueue.push_back([&]() {
             //! I think ImGui_ImplVulkan_Shutdown is already
-            // vkDestroyDescriptorPool(_device, imguiPool, nullptr);
+            // vkDestroyDescriptorPool(_device, _imguiPool, nullptr);
             ImGui_ImplVulkan_Shutdown();
             ImGui::SFML::Shutdown();
             ImGui::DestroyContext();
@@ -391,15 +387,25 @@ namespace bluevk {
     void BlueVKEngine::draw() {
         FrameData &frame = get_current_frame();
         VK_CHECK(vkWaitForFences(_device, 1, &frame._renderFence, true, 1000000000));
-        VK_CHECK(vkResetFences(_device, 1, &frame._renderFence));
+
         uint32_t swapchainImageIndex;
-        VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000, frame._swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex));
+        VkResult nextImageResult = vkAcquireNextImageKHR(_device, _swapchain, 1000000000, frame._swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
+        if (nextImageResult == VK_ERROR_OUT_OF_DATE_KHR) {
+            _resizeRequested = true;
+            return;
+        } else {
+            VK_CHECK(nextImageResult);
+        }
         VkImage swapchainImage = _swapchainImages[swapchainImageIndex];
+        // _drawExtent = _drawImage.extent;
+        _drawExtent.width = std::min(_swapchainExtent.width, _drawImage.extent.width) * _renderScale;
+        _drawExtent.height = std::min(_swapchainExtent.height, _drawImage.extent.height) * _renderScale;
+
+        VK_CHECK(vkResetFences(_device, 1, &frame._renderFence));
         VkCommandBuffer cmd = frame._mainCommandBuffer;
         VK_CHECK(vkResetCommandBuffer(cmd, 0));
         VkCommandBufferBeginInfo cmdBeginInfo = command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
-        _drawExtent = _drawImage.extent;
 
         transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
@@ -433,7 +439,13 @@ namespace bluevk {
             .pSwapchains = &_swapchain,
             .pImageIndices = &swapchainImageIndex,
         };
-        VK_CHECK(vkQueuePresentKHR(_graphicsQueue, &presentInfo));
+        VkResult presentResult = vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+        if (presentResult == VK_ERROR_OUT_OF_DATE_KHR) {
+            _resizeRequested = true;
+            return;
+        } else {
+            VK_CHECK(presentResult);
+        }
 
         _frameNumber++;
     }
@@ -502,12 +514,50 @@ namespace bluevk {
         _swapchainImages = vkbSwapchain.get_images().value();
         _swapchainImageViews = vkbSwapchain.get_image_views().value();
     }
+    void BlueVKEngine::create_draw_images() {
+        _drawImage.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _drawImage.extent = _windowSize;
+        VmaAllocationCreateInfo allocCreateInfo{
+            .usage = VMA_MEMORY_USAGE_GPU_ONLY,
+            .requiredFlags = VkMemoryPropertyFlags{VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT},
+        };
+        _drawImage.image = ImageBuilder{}
+                               .set_extent(_windowSize)
+                               .set_format(_drawImage.format)
+                               .set_usage(VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                          VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                          VK_IMAGE_USAGE_STORAGE_BIT |
+                                          VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+                               .vmaBuild(_vmaAllocator, &allocCreateInfo, &_drawImage.allocation, nullptr);
+        _drawImage.view = ImageViewBuilder{}
+                              .set_format(_drawImage.format)
+                              .set_image(_drawImage.image)
+                              .build(_device);
+    }
+    void BlueVKEngine::resize_swapchain() {
+        vkDeviceWaitIdle(_device);
+        vkQueueWaitIdle(_graphicsQueue);
+
+        destroy_swapchain();
+        destroy_draw_images();
+
+        sf::Vector2u newSize = _window.getSize();
+
+        create_swapchain(VkExtent2D{newSize.x, newSize.y});
+        create_draw_images();
+
+        _resizeRequested = false;
+    }
     void BlueVKEngine::destroy_swapchain() {
         vkDestroySwapchainKHR(_device, _swapchain, nullptr);
 
         for (uint32_t i = 0; i < _swapchainImageViews.size(); i++) {
             vkDestroyImageView(_device, _swapchainImageViews[i], nullptr);
         }
+    }
+    void BlueVKEngine::destroy_draw_images() {
+        vkDestroyImageView(_device, _drawImage.view, nullptr);
+        vmaDestroyImage(_vmaAllocator, _drawImage.image, _drawImage.allocation);
     }
     void BlueVKEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function) {
         VK_CHECK(vkResetFences(_device, 1, &_immFence));
