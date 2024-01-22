@@ -8,6 +8,21 @@
 
 constexpr uint32_t FRAME_OVERLAP = 2;
 
+struct ComputeEffect {
+    struct ComputePushConstants {
+        glm::vec4 data1;
+        glm::vec4 data2;
+        glm::vec4 data3;
+        glm::vec4 data4;
+    };
+
+    const char *name;
+
+    VkPipelineLayout layout;
+    VkPipeline pipeline;
+    ComputePushConstants data;
+};
+
 namespace bluevk {
     struct BlueVKEngineParams {
         VkExtent2D windowSize = {1700, 1000};
@@ -69,6 +84,13 @@ namespace bluevk {
         VkCommandPool _immCommandPool;
         VkCommandBuffer _immCommandBuffer;
 
+        VkDescriptorSetLayout _drawImageDescriptorLayout;
+        VkDescriptorSet _drawImageDescriptorSet;
+        std::vector<ComputeEffect> _computeEffects{};
+        int _currentComputeEffect{0};
+        VkPipelineLayout _triangleLayout;
+        VkPipeline _trianglePipeline;
+
         BlueVKEngine(BlueVKEngineParams &params);
         ~BlueVKEngine();
 
@@ -77,9 +99,14 @@ namespace bluevk {
         void init_commands();
         void init_sync_structures();
         void init_imgui();
+        void init_descriptors();
+        void init_pipelines();
+        void init_pipelines_gradient();
+        void init_pipelines_triangle();
 
         void draw();
         void draw_background(VkCommandBuffer cmd);
+        void draw_geometry(VkCommandBuffer cmd);
         void draw_imgui(VkCommandBuffer cmd, VkImageView view);
 
         void create_swapchain(VkExtent2D size);

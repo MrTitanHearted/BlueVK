@@ -4,7 +4,7 @@
 #include <fstream>
 
 namespace bluevk {
-    VkShaderModule load_shader_module(const char *path, VkDevice device);
+    VkShaderModule load_shader_module(VkDevice device, const char *path);
 
     struct PipelineLayoutBuilder {
         std::vector<VkDescriptorSetLayout> setLayouts{};
@@ -21,7 +21,7 @@ namespace bluevk {
             .pNext = nullptr,
         };
         ComputePipelineBuilder &set_layout(VkPipelineLayout layout);
-        ComputePipelineBuilder &set_shader_stage(VkShaderModule shader, const char *name = "main");
+        ComputePipelineBuilder &set_shader(VkShaderModule shader, const char *name = "main");
         VkPipeline build(VkDevice device);
     };
     struct GraphicsPipelineBuilder {

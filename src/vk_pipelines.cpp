@@ -2,7 +2,7 @@
 #include <vk_initializers.hpp>
 
 namespace bluevk {
-    VkShaderModule load_shader_module(const char* path, VkDevice device) {
+    VkShaderModule load_shader_module(VkDevice device, const char* path) {
         std::ifstream file{path, std::ios::ate | std::ios::binary};
         if (!file.is_open()) {
             throw std::runtime_error(fmt::format("[BlueVK]::[ERROR]: Failed to load shader '{}'!", path));
@@ -59,7 +59,7 @@ namespace bluevk {
         info.layout = layout;
         return *this;
     }
-    ComputePipelineBuilder& ComputePipelineBuilder::set_shader_stage(VkShaderModule shader, const char* name) {
+    ComputePipelineBuilder& ComputePipelineBuilder::set_shader(VkShaderModule shader, const char* name) {
         info.stage = VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .pNext = nullptr,

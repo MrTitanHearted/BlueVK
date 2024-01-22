@@ -60,7 +60,20 @@ namespace bluevk {
                 ImGui_ImplVulkan_NewFrame();
                 ImGui::NewFrame();
 
-                ImGui::ShowDemoWindow();
+                if (ImGui::Begin("Background")) {
+                    ComputeEffect &selected = _computeEffects[_currentComputeEffect];
+
+                    ImGui::Text("Selected effect: %s", selected.name);
+
+                    ImGui::SliderInt("Effect Index", &_currentComputeEffect, 0, _computeEffects.size() - 1);
+
+                    ImGui::InputFloat4("data1", (float *)&selected.data.data1);
+                    ImGui::InputFloat4("data2", (float *)&selected.data.data2);
+                    ImGui::InputFloat4("data3", (float *)&selected.data.data3);
+                    ImGui::InputFloat4("data4", (float *)&selected.data.data4);
+
+                    ImGui::End();
+                }
 
                 ImGui::EndFrame();
                 ImGui::Render();
@@ -85,12 +98,12 @@ namespace bluevk {
         init_commands();
         init_sync_structures();
         init_imgui();
+        init_descriptors();
+        init_pipelines();
     }
     BlueVKEngine::~BlueVKEngine() {
         fmt::println("Destroying BlueVKEngine!");
         vkDeviceWaitIdle(_device);
-        vkQueueWaitIdle(_graphicsQueue);
-        destroy_swapchain();
         _mainDeletionQueue.flush();
     }
     void BlueVKEngine::init_vulkan() {
@@ -150,6 +163,7 @@ namespace bluevk {
             vmaDestroyAllocator(_vmaAllocator);
             vkDestroySurfaceKHR(_instance, _surface, nullptr);
             vkDestroyDevice(_device, nullptr);
+            destroy_swapchain();
             vkb::destroy_debug_utils_messenger(_instance, _debugMessenger);
             vkDestroyInstance(_instance, nullptr);
         });
@@ -260,12 +274,118 @@ namespace bluevk {
                                            .ColorAttachmentFormat = _swapchainImageFormat};
 
         ImGui_ImplVulkan_Init(&initInfo, VK_NULL_HANDLE);
-        // ImGui_ImplVulkan_CreateFontsTexture();
+        ImGui_ImplVulkan_CreateFontsTexture();
         _mainDeletionQueue.push_back([&]() {
+            //! I think ImGui_ImplVulkan_Shutdown is already
             // vkDestroyDescriptorPool(_device, imguiPool, nullptr);
             ImGui_ImplVulkan_Shutdown();
             ImGui::SFML::Shutdown();
             ImGui::DestroyContext();
+        });
+    }
+    void BlueVKEngine::init_descriptors() {
+        _drawImageDescriptorLayout = DescriptorSetLayoutBuilder{}
+                                         .add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
+                                         .build(_device, VK_SHADER_STAGE_COMPUTE_BIT);
+
+        std::vector<VkDescriptorPoolSize> sizes = {{.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 10}};
+        _drawImageDescriptorSet = _mainDescriptorAllocator
+                                      .init_pool(_device, 10, sizes)
+                                      .allocate(_device, _drawImageDescriptorLayout);
+
+        VkDescriptorImageInfo imgInfo{
+            .imageView = _drawImage.view,
+            .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+        };
+
+        VkWriteDescriptorSet drawImageWrite{
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = _drawImageDescriptorSet,
+            .dstBinding = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+            .pImageInfo = &imgInfo,
+        };
+
+        vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
+
+        _mainDeletionQueue.push_back([&]() {
+            _mainDescriptorAllocator.destroy_pool(_device);
+        });
+    }
+    void BlueVKEngine::init_pipelines() {
+        init_pipelines_gradient();
+        init_pipelines_triangle();
+    }
+    void BlueVKEngine::init_pipelines_gradient() {
+        VkPipelineLayout pipelineLayout = PipelineLayoutBuilder{}
+                                              .add_pc_range(VkPushConstantRange{
+                                                  .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+                                                  .offset = 0,
+                                                  .size = sizeof(glm::vec4) * 4,
+                                              })
+                                              .add_set_layout(_drawImageDescriptorLayout)
+                                              .build(_device);
+        VkShaderModule computeShader = load_shader_module(_device, "assets/shaders/gradient_color.comp.spv");
+        VkPipeline gradientPipeline = ComputePipelineBuilder{}
+                                          .set_layout(pipelineLayout)
+                                          .set_shader(computeShader)
+                                          .build(_device);
+        vkDestroyShaderModule(_device, computeShader, nullptr);
+
+        computeShader = load_shader_module(_device, "assets/shaders/sky.comp.spv");
+        VkPipeline skyPipeline = ComputePipelineBuilder{}
+                                     .set_layout(pipelineLayout)
+                                     .set_shader(computeShader)
+                                     .build(_device);
+        vkDestroyShaderModule(_device, computeShader, nullptr);
+
+        _computeEffects.push_back(ComputeEffect{
+            .name = "Gradient Effect",
+            .layout = pipelineLayout,
+            .pipeline = gradientPipeline,
+            .data = {glm::vec4(1, 0, 0, 1), glm::vec4(0, 0, 1, 1)},
+        });
+        _computeEffects.push_back(ComputeEffect{
+            .name = "Night Sky Effect",
+            .layout = pipelineLayout,
+            .pipeline = skyPipeline,
+            .data = {glm::vec4(0.1, 0.2, 0.4, 0.97)},
+        });
+
+        _mainDeletionQueue.push_back([&]() {
+            vkDestroyPipelineLayout(_device, _computeEffects[0].layout, nullptr);
+
+            for (uint32_t i = 0; i < _computeEffects.size(); i++) {
+                vkDestroyPipeline(_device, _computeEffects[i].pipeline, nullptr);
+            }
+        });
+    }
+    void BlueVKEngine::init_pipelines_triangle() {
+        VkShaderModule vertShader = load_shader_module(_device, "assets/shaders/triangle.vert.spv");
+        VkShaderModule fragShader = load_shader_module(_device, "assets/shaders/triangle.frag.spv");
+
+        _triangleLayout = PipelineLayoutBuilder{}.build(_device);
+        _trianglePipeline = GraphicsPipelineBuilder{}
+                                .set_layout(_triangleLayout)
+                                .set_shaders(vertShader, fragShader)
+                                .set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+                                .set_polygon_mode(VK_POLYGON_MODE_FILL)
+                                .set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE)
+                                .set_multisampling_none()
+                                .disable_blending()
+                                .disable_depthtest()
+                                .set_color_attachment_format(_drawImage.format)
+                                .set_depth_format(VK_FORMAT_UNDEFINED)
+                                .build(_device);
+
+        vkDestroyShaderModule(_device, vertShader, nullptr);
+        vkDestroyShaderModule(_device, fragShader, nullptr);
+
+        _mainDeletionQueue.push_back([&]() {
+            vkDestroyPipelineLayout(_device, _triangleLayout, nullptr);
+            vkDestroyPipeline(_device, _trianglePipeline, nullptr);
         });
     }
     void BlueVKEngine::draw() {
@@ -285,13 +405,17 @@ namespace bluevk {
 
         draw_background(cmd);
 
-        transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+        draw_geometry(cmd);
+
+        transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         transition_image(cmd, swapchainImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
         copy_image_to_image(cmd, _drawImage.image, swapchainImage, _drawExtent, _drawExtent);
         transition_image(cmd, swapchainImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        
+
         draw_imgui(cmd, _swapchainImageViews[swapchainImageIndex]);
-        
+
         transition_image(cmd, swapchainImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
         VK_CHECK(vkEndCommandBuffer(cmd));
@@ -314,10 +438,41 @@ namespace bluevk {
         _frameNumber++;
     }
     void BlueVKEngine::draw_background(VkCommandBuffer cmd) {
-        float flash = std::abs(std::sin(_frameNumber / 120.0f));
-        VkClearColorValue clearValue{0.0f, 0.0f, flash, 1.0f};
-        VkImageSubresourceRange clearRange = image_subresource_range();
-        vkCmdClearColorImage(cmd, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, &clearValue, 1, &clearRange);
+        ComputeEffect &effect = _computeEffects[_currentComputeEffect];
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, effect.layout, 0, 1, &_drawImageDescriptorSet, 0, nullptr);
+
+        vkCmdPushConstants(cmd, effect.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(effect.data), &effect.data);
+
+        vkCmdDispatch(cmd, std::ceil(_drawExtent.width / 16.0), std::ceil(_drawExtent.height / 16.0), 1);
+    }
+    void BlueVKEngine::draw_geometry(VkCommandBuffer cmd) {
+        VkRenderingAttachmentInfo colorAttachment = attachment_info(_drawImage.view, nullptr, VK_IMAGE_LAYOUT_GENERAL);
+
+        VkRenderingInfo renderInfo = rendering_info(_drawExtent, &colorAttachment, nullptr);
+        vkCmdBeginRendering(cmd, &renderInfo);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
+
+        VkViewport viewport{
+            .x = 0,
+            .y = 0,
+            .width = (float)_drawExtent.width,
+            .height = (float)_drawExtent.height,
+            .minDepth = 0.0f,
+            .maxDepth = 1.0f,
+        };
+        VkRect2D scissor{
+            .offset = VkOffset2D{0, 0},
+            .extent = _drawExtent,
+        };
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        vkCmdEndRendering(cmd);
     }
     void BlueVKEngine::draw_imgui(VkCommandBuffer cmd, VkImageView view) {
         VkRenderingAttachmentInfo colorAttachment = attachment_info(view, nullptr, VK_IMAGE_LAYOUT_GENERAL);
@@ -333,7 +488,7 @@ namespace bluevk {
             vkb::SwapchainBuilder{_physicalDevice, _device, _surface}
                 .set_desired_format(VkSurfaceFormatKHR{.format = _swapchainImageFormat,
                                                        .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
-                .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
+                .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
                 .set_desired_extent(size.width, size.height)
                 .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                 .build();
