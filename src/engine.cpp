@@ -53,6 +53,7 @@ namespace bluevk {
                                 render = false;
                             } break;
                             default:
+                                break;
                         }
                         break;
                     case sf::Event::LostFocus:
@@ -62,6 +63,7 @@ namespace bluevk {
                         _freezRendering = false;
                         break;
                     default:
+                        break;
                 }
             }
             if (_freezRendering) {
@@ -386,7 +388,6 @@ namespace bluevk {
     }
     void BlueVKEngine::draw() {
         FrameData &frame = get_current_frame();
-        VK_CHECK(vkWaitForFences(_device, 1, &frame._renderFence, true, 1000000000));
 
         uint32_t swapchainImageIndex;
         VkResult nextImageResult = vkAcquireNextImageKHR(_device, _swapchain, 1000000000, frame._swapchainSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
@@ -448,6 +449,7 @@ namespace bluevk {
         }
 
         _frameNumber++;
+        VK_CHECK(vkWaitForFences(_device, 1, &frame._renderFence, true, 1000000000));
     }
     void BlueVKEngine::draw_background(VkCommandBuffer cmd) {
         ComputeEffect &effect = _computeEffects[_currentComputeEffect];
