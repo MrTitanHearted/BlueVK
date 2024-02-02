@@ -1,14 +1,52 @@
 #include <iostream>
 
-#include <engine.hpp>
+#include <BlueVK/BlueVK.hpp>
+
+#include <SFML/Graphics.hpp>
+
+const int WIDTH = 1700;
+const int HEIGHT = 1000;
+const std::string TITLE = "BlueVK";
 
 int main() {
-    bluevk::BlueVKEngine::Initialize(bluevk::BlueVKEngineParams{});
+    sf::RenderWindow window = sf::RenderWindow{
+        sf::VideoMode{WIDTH, HEIGHT},
+        TITLE,
+        sf::Style::Close | sf::Style::Titlebar,
+        sf::ContextSettings(0)};
 
-    bluevk::BlueVKEngine &engine = bluevk::BlueVKEngine::getInstance();
+    BlueVK::Init({
+        .windowTitle = TITLE,
+        .windowSize = VkExtent2D{WIDTH, HEIGHT},
+        .isResizable = false,
+        .windowHandle = (void *)window.getSystemHandle(),
+    });
 
-    engine.run();
+    sf::Event event;
+    sf::Clock clock;
 
-    bluevk::BlueVKEngine::Shutdown();
-    return EXIT_SUCCESS;
+    while (window.isOpen()) {
+        float dt = clock.getElapsedTime().asMilliseconds();
+        while (window.pollEvent(event)) {
+            switch (event.type) {
+                case sf::Event::Closed: {
+                    window.close();
+                } break;
+                case sf::Event::KeyPressed:
+                    switch (event.key.code) {
+                        case sf::Keyboard::Escape: {
+                            window.close();
+                        } break;
+                        default:
+                            break;
+                    }
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    BlueVK::Shutdown();
+    return 0;
 }

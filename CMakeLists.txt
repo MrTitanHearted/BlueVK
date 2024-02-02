@@ -46,7 +46,12 @@ find_path(STB_INCLUDE_DIR NAMES stb_image.h)
 include_directories(include)
 include_directories(${STB_INCLUDE_DIR})
 
-file(GLOB SOURCES "include/*.hpp" "src/*.cpp")
+file(GLOB SOURCES
+    "inlcude/*.hpp"
+    "src/*.cpp"
+    "src/BlueVK/*.cpp"
+    "src/BlueVK/Platform/*.cpp"
+)
 
 set(TARGET BlueVK)
 
