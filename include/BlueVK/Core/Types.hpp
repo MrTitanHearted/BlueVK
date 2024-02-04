@@ -51,10 +51,10 @@
 #error "Unknown Platform!"
 #endif
 
-#define VK_CHECK(x)                                                                                   \
-    do {                                                                                              \
-        VkResult err = x;                                                                             \
-        if (err) {                                                                                    \
+#define VK_CHECK(x)                                                                                                      \
+    do {                                                                                                                 \
+        VkResult err = x;                                                                                                \
+        if (err) {                                                                                                       \
             throw std::runtime_error(fmt::format("[BlueVK]::[ERROR]: Detected Vulkan error: {}", string_VkResult(err))); \
-        }                                                                                             \
+        }                                                                                                                \
     } while (0)

@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 set(CMAKE_TOOLCHAIN_FILE $ENV{VCPKG_CMAKE})
+set(CMAKE_CXX_COMPILER clang++)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 
@@ -8,7 +9,7 @@ project(BlueVK)
 
 find_program(GLSL_VALIDATOR glslangValidator HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/Bin32/)
 
-file(GLOB GLSL_SOURCE_FILES
+file(GLOB_RECURSE GLSL_SOURCE_FILES
     "${PROJECT_SOURCE_DIR}/assets/shaders/*.vert"
     "${PROJECT_SOURCE_DIR}/assets/shaders/*.frag"
     "${PROJECT_SOURCE_DIR}/assets/shaders/*.comp"
@@ -46,11 +47,9 @@ find_path(STB_INCLUDE_DIR NAMES stb_image.h)
 include_directories(include)
 include_directories(${STB_INCLUDE_DIR})
 
-file(GLOB SOURCES
+file(GLOB_RECURSE SOURCES
     "inlcude/*.hpp"
     "src/*.cpp"
-    "src/BlueVK/*.cpp"
-    "src/BlueVK/Platform/*.cpp"
 )
 
 set(TARGET BlueVK)
