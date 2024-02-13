@@ -102,6 +102,11 @@ void BlueVK::init_vulkan(void *windowHandle) {
 void BlueVK::init_swapchain() {
     create_swapchain(_windowSize);
     create_draw_images();
+
+    _mainDeletionQueue.push_back([&]() {
+        destroy_swapchain();
+        destroy_draw_images();
+    });
 }
 
 void BlueVK::create_swapchain(VkExtent2D size) {
@@ -126,11 +131,8 @@ void BlueVK::create_swapchain(VkExtent2D size) {
     _swapchainExtent = vkbSwapchain.extent;
     _swapchainImages = vkbSwapchain.get_images().value();
     _swapchainImageViews = vkbSwapchain.get_image_views().value();
-
-    _mainDeletionQueue.push_back([&]() {
-        destroy_swapchain();
-    });
 }
+
 void BlueVK::create_draw_images() {
     VmaAllocationCreateInfo allocCreateInfo = VmaAllocationCreateInfo{
         .usage = VMA_MEMORY_USAGE_GPU_ONLY,
@@ -144,10 +146,8 @@ void BlueVK::create_draw_images() {
                                 VK_IMAGE_USAGE_STORAGE_BIT |
                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
                      .allocate(_device, _vmaAllocator, &allocCreateInfo);
-    _mainDeletionQueue.push_back([&]() {
-        destroy_draw_images();
-    });
 }
+
 void BlueVK::destroy_swapchain() {
     for (VkImageView imageView : _swapchainImageViews) {
         vkDestroyImageView(_device, imageView, nullptr);
@@ -157,6 +157,7 @@ void BlueVK::destroy_swapchain() {
     }
     vkDestroySwapchainKHR(_device, _swapchain, nullptr);
 }
+
 void BlueVK::destroy_draw_images() {
     vkDestroyImageView(_device, _drawImage.view, nullptr);
     vmaDestroyImage(_vmaAllocator, _drawImage.image, _drawImage.allocation);
