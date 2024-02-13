@@ -33,11 +33,8 @@ BlueVK::BlueVK(BlueVKParams params) {
 BlueVK::~BlueVK() {
     fmt::println("[BlueVK]: BlueVK Shutdown");
 
-    vmaDestroyAllocator(_vmaAllocator);
-    vkDestroySurfaceKHR(_instance, _surface, nullptr);
-    vkDestroyDevice(_device, nullptr);
-    vkb::destroy_debug_utils_messenger(_instance, _debugMessenger);
-    vkDestroyInstance(_instance, nullptr);
+    vkDeviceWaitIdle(_device);
+    _mainDeletionQueue.flush();
 }
 
 void BlueVK::init_vulkan(void *windowHandle) {
@@ -73,13 +70,13 @@ void BlueVK::init_vulkan(void *windowHandle) {
             .select();
     if (!physicalDeviceReturn.has_value()) {
         throw std::runtime_error(fmt::format("[BlueVK]::[ERROR]: Failed to select compatiable GPU:\n{}",
-                                             physicalDeviceReturn.error().value()));
+                                             physicalDeviceReturn.error().message()));
     }
     vkb::PhysicalDevice vkbPhysicalDevice = physicalDeviceReturn.value();
     vkb::Result<vkb::Device> deviceReturn = vkb::DeviceBuilder{vkbPhysicalDevice}.build();
     if (!deviceReturn.has_value()) {
         throw std::runtime_error(fmt::format("[BlueVK]::[ERROR]: Failed to build device:\n{}",
-                                             deviceReturn.error().value()));
+                                             deviceReturn.error().message()));
     }
     vkb::Device vkbDevice = deviceReturn.value();
     _physicalDevice = vkbPhysicalDevice;
@@ -93,4 +90,74 @@ void BlueVK::init_vulkan(void *windowHandle) {
         .instance = _instance,
     };
     vmaCreateAllocator(&allocatorInfo, &_vmaAllocator);
+
+    _mainDeletionQueue.push_back([&]() {
+        vmaDestroyAllocator(_vmaAllocator);
+        vkDestroySurfaceKHR(_instance, _surface, nullptr);
+        vkDestroyDevice(_device, nullptr);
+        vkb::destroy_debug_utils_messenger(_instance, _debugMessenger);
+        vkDestroyInstance(_instance, nullptr);
+    });
+}
+void BlueVK::init_swapchain() {
+    create_swapchain(_windowSize);
+    create_draw_images();
+}
+
+void BlueVK::create_swapchain(VkExtent2D size) {
+    _windowSize = size;
+    _swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
+
+    vkb::Result<vkb::Swapchain> swapchainReturn =
+        vkb::SwapchainBuilder{_physicalDevice, _device, _surface}
+            .set_desired_format(VkSurfaceFormatKHR{.format = _swapchainImageFormat,
+                                                   .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR})
+            .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
+            .set_desired_extent(size.width, size.height)
+            .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+            .build();
+    if (!swapchainReturn.has_value()) {
+        throw std::runtime_error(fmt::format("[BlueVK]::[ERROR]: Failed to build swapchain:\n{}",
+                                             swapchainReturn.error().message()));
+    }
+    vkb::Swapchain vkbSwapchain = swapchainReturn.value();
+
+    _swapchain = vkbSwapchain;
+    _swapchainExtent = vkbSwapchain.extent;
+    _swapchainImages = vkbSwapchain.get_images().value();
+    _swapchainImageViews = vkbSwapchain.get_image_views().value();
+
+    _mainDeletionQueue.push_back([&]() {
+        destroy_swapchain();
+    });
+}
+void BlueVK::create_draw_images() {
+    VmaAllocationCreateInfo allocCreateInfo = VmaAllocationCreateInfo{
+        .usage = VMA_MEMORY_USAGE_GPU_ONLY,
+        .requiredFlags = VkMemoryPropertyFlags{VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT},
+    };
+    _drawImage = ImageAllocator{}
+                     .set_format(VK_FORMAT_R16G16B16A16_SFLOAT)
+                     .set_extent(_windowSize)
+                     .set_usage(VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                VK_IMAGE_USAGE_STORAGE_BIT |
+                                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+                     .allocate(_device, _vmaAllocator, &allocCreateInfo);
+    _mainDeletionQueue.push_back([&]() {
+        destroy_draw_images();
+    });
+}
+void BlueVK::destroy_swapchain() {
+    for (VkImageView imageView : _swapchainImageViews) {
+        vkDestroyImageView(_device, imageView, nullptr);
+    }
+    for (VkImage image : _swapchainImages) {
+        vkDestroyImage(_device, image, nullptr);
+    }
+    vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+}
+void BlueVK::destroy_draw_images() {
+    vkDestroyImageView(_device, _drawImage.view, nullptr);
+    vmaDestroyImage(_vmaAllocator, _drawImage.image, _drawImage.allocation);
 }
