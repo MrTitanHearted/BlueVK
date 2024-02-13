@@ -61,7 +61,7 @@ BlueVKImage ImageAllocator::allocate(VkDevice device,
                                      VmaAllocationCreateInfo* allocCreateInfo) {
     BlueVKImage image{
         .extent = {imageInfo.extent.width, imageInfo.extent.height},
-        .format = image.format,
+        .format = imageInfo.format,
     };
 
     vmaCreateImage(allocator,
